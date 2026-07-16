@@ -1,0 +1,71 @@
+#define F_CPU 1000000UL
+/*
+ * ATtiny10 RC Pulse Reader -> PB0/PB1 Output
+ * ============================================
+ * Reads a 1000-2000us pulse on PB2.
+ * If pulse > 1500us -> PB1 on, PB0 off
+ * If pulse <= 1500us -> PB0 on, PB1 off
+ *
+ * Uses Timer0 with no prescaling. At F_CPU = 1MHz,
+ * each timer tick = 1us, so TCNT0 directly gives
+ * pulse width in microseconds (up to 65535us before
+ * overflow, way more than we need here).
+ *
+ * Build:
+ *   avr-gcc -mmcu=attiny10 -DF_CPU=1000000UL -O2 -o blink.elf blink.c
+ *   avr-objcopy -O ihex blink.elf blink.hex
+ */
+#include <avr/io.h>
+
+#define PULSE_PIN   PB2
+#define THRESHOLD_US 1500
+
+int main(void)
+{
+    /* PB0, PB1 outputs; PB2 stays input (default) */
+    DDRB = (1 << PB0) | (1 << PB1);
+
+    /* Timer0: no prescaling, normal mode -> 1 tick = 1us at 1MHz */
+    TCCR0B = (1 << CS00);
+
+    for (;;)
+    {
+        uint16_t width = 0;
+        uint16_t timeout;
+
+        /* --- Wait for rising edge (with timeout so we don't hang forever) --- */
+        timeout = 0;
+        while (!(PINB & (1 << PULSE_PIN)))
+        {
+            if (++timeout == 0) break;   /* wraps at 65536 iterations */
+        }
+        if (!(PINB & (1 << PULSE_PIN)))
+            continue; /* never went high, try again */
+
+        /* Reset timer at start of pulse */
+        TCNT0 = 0;
+
+        /* --- Wait for falling edge --- */
+        timeout = 0;
+        while (PINB & (1 << PULSE_PIN))
+        {
+            if (++timeout == 0) break;
+        }
+
+        width = TCNT0;
+
+        /* Sanity check: only act on plausible RC pulse widths.
+         * Ignore noise/glitches outside ~800-2200us range. */
+        if (width < 800 || width > 2200)
+            continue;
+
+        if (width > THRESHOLD_US)
+        {
+            PORTB = (1 << PB1);
+        }
+        else
+        {
+            PORTB = (1 << PB0);
+        }
+    }
+}
