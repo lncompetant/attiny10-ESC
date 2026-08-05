@@ -1,0 +1,78 @@
+#define F_CPU 1000000UL
+/*
+ * ATtiny10 RC Pulse Reader -> PWM Dimmed LED
+ * ============================================
+ * width_us = count * 10 - 500  (calibrated earlier)
+ *
+ * LED behavior:
+ *   1000 -> 1480   : ramps DOWN (1000=bright, 1480=off)
+ *   1481 -> 1519   : hard jump to full brightness (flat)
+ *   1520 -> 2000   : ramps UP (1520=off, 2000=bright)
+ */
+#include <avr/io.h>
+
+#define PULSE_PIN       PB2
+#define LOW_EDGE_US     1000
+#define PLATEAU_LOW_US  1450
+#define PLATEAU_HIGH_US 1550
+#define HIGH_EDGE_US    2000
+
+int main(void)
+{
+    DDRB = (1 << PB0);
+
+    TCCR0A = (1 << COM0A1) | (1 << WGM00) | (1 << WGM01);
+    TCCR0B = (1 << CS00);
+    OCR0A = 0;
+
+    for (;;)
+    {
+        uint16_t timeout = 0;
+        while (!(PINB & (1 << PULSE_PIN)))
+        {
+            if (++timeout == 0) break;
+        }
+        if (!(PINB & (1 << PULSE_PIN)))
+            continue;
+
+        uint16_t count = 0;
+        while (PINB & (1 << PULSE_PIN))
+        {
+            __asm__ __volatile__("nop");
+            count++;
+            if (count == 0) break;
+        }
+
+        int32_t width = (int32_t)count * 10 - 570
+        ;
+
+        if (width < 700 || width > 2300) //anything outside of the microsecond pulse range is garbage
+            continue;
+
+        if (width < LOW_EDGE_US) width = LOW_EDGE_US; //clamp down readings that are slightly 
+        if (width > HIGH_EDGE_US) width = HIGH_EDGE_US;
+
+        uint8_t duty;
+
+        if (width >= PLATEAU_LOW_US && width <= PLATEAU_HIGH_US)
+        {
+            duty = 255; /* hard jump to max */
+        }
+        else if (width < PLATEAU_LOW_US)
+        {
+            /* Ramp down: LOW_EDGE_US (bright) -> PLATEAU_LOW_US (off) */
+            int32_t span = PLATEAU_LOW_US - LOW_EDGE_US;
+            int32_t pos = width - LOW_EDGE_US;
+            duty = (uint8_t)(255UL - ((uint32_t)pos * 255UL) / span);
+        }
+        else
+        {
+            /* Ramp up: PLATEAU_HIGH_US (off) -> HIGH_EDGE_US (bright) */
+            int32_t span = HIGH_EDGE_US - PLATEAU_HIGH_US;
+            int32_t pos = width - PLATEAU_HIGH_US;
+            duty = (uint8_t)(((uint32_t)pos * 255UL) / span);
+        }
+
+        OCR0A = duty;
+    }
+}
