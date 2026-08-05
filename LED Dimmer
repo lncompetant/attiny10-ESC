@@ -1,0 +1,58 @@
+#define F_CPU 1000000UL
+/*
+ * ATtiny10 RC Pulse Reader -> PWM Dimmed LED (calibrated)
+ * ============================================
+ * width_us = count * 10 - 500
+ * (empirically calibrated from measured blink counts:
+ *  1000us -> count ~150, 2000us -> count ~250)
+ */
+#include <avr/io.h>
+
+#define PULSE_PIN     PB2
+#define CENTER_US     1500
+#define MAX_DEV_US    500
+
+int main(void)
+{
+    DDRB = (1 << PB0);
+
+    TCCR0A = (1 << COM0A1) | (1 << WGM00) | (1 << WGM01);
+    TCCR0B = (1 << CS00);
+    OCR0A = 0;
+
+    for (;;)
+    {
+        uint16_t timeout = 0;
+        while (!(PINB & (1 << PULSE_PIN)))
+        {
+            if (++timeout == 0) break;
+        }
+        if (!(PINB & (1 << PULSE_PIN)))
+            continue;
+
+        uint16_t count = 0;
+        while (PINB & (1 << PULSE_PIN))
+        {
+            __asm__ __volatile__("nop");
+            count++;
+            if (count == 0) break;
+        }
+
+        /* Calibrated conversion */
+        int32_t width = (int32_t)count * 10 - 500;
+
+        /* Sanity check with margin for burst-measurement error */
+        if (width < 700 || width > 2300)
+            continue;
+
+        if (width < 1000) width = 1000;
+        if (width > 2000) width = 2000;
+
+        int16_t dev = (int16_t)width - CENTER_US;
+        if (dev < 0) dev = -dev;
+
+        uint8_t duty = (uint8_t)(((uint32_t)dev * 255UL) / MAX_DEV_US);
+
+        OCR0A = duty;
+    }
+}
